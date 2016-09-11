@@ -58,6 +58,9 @@
 #define DEFAULT_OUTWIDTH (640)
 #define DEFAULT_OUTHEIGHT (480)
 
+#define DEFAULT_XYMAPFILE "xymap.dat"
+#define DEFAULT_BMAPFILE "bmap.dat"
+
 
 enum{
 
@@ -69,11 +72,6 @@ enum{
     BOTTOMSINKID
 
 };
-
-
-
-
-
 
 G_BEGIN_DECLS
 
@@ -123,17 +121,16 @@ typedef struct
 
 struct _PanoramaAllocatorClass
 {
-  GstAllocatorClass parent_class;
+    GstAllocatorClass parent_class;
 };
 typedef struct _PanoramaAllocatorClass PanoramaAllocatorClass;
 
 typedef struct
 {
-  GstMemory mem;
+    GstMemory mem;
+    gpointer data;
 
-  gpointer data;
-
-} CudaHostMemory;
+}CudaHostMemory;
 
 
 
@@ -147,42 +144,44 @@ struct PanoramaVector {
 
 struct _GstPanorama
 {
-  GstElement element;
-  GstAllocator *cudaallocator;
+    GstElement element;
+    GstAllocator *cudaallocator;
 
-  GstPad *sinkpads[SINKPADCNT];
-  // GstPad *leftsinkpad;
-  // GstPad *rightsinkpad;
-  // GstPad *backsinkpad;
-  // GstPad *topsinkpad;
-  // GstPad *bottomsinkpad;
-  GstPad *outsrcpad;
+    GstPad *sinkpads[SINKPADCNT];
+    // GstPad *leftsinkpad;
+    // GstPad *rightsinkpad;
+    // GstPad *backsinkpad;
+    // GstPad *topsinkpad;
+    // GstPad *bottomsinkpad;
+    GstPad *outsrcpad;
 
-  /*Frame counters on sink pads, and current mask based on phi and theta*/
-  volatile guint newframes;
-  // volatile guint processingflag;
-  // volatile guint matrixupdateflag;
-  GMutex processing;
+    /*Frame counters on sink pads, and current mask based on phi and theta*/
+    volatile guint newframes;
+    // volatile guint processingflag;
+    // volatile guint matrixupdateflag;
+    GMutex processing;
 
-  guint newframemask;
-  gboolean autoupdate;
-
-
-  /*The angle of view*/
-  gint phi;
-  gint theta;
-  struct PanoramaVector vector;
-
-  guint inbuffersize;
+    guint newframemask;
+    gboolean autoupdate;
 
 
+    /*The angle of view*/
+    gint phi;
+    gint theta;
+    struct PanoramaVector vector;
+    guint inbuffersize;
+    guint outbuffersize;
+    gint inwidth;
+    gint inheight;
+    gint outwidth;
+    gint outheight;
 
 // gboolean silent;
 };
 
 struct _GstPanoramaClass
 {
-  GstElementClass parent_class;
+    GstElementClass parent_class;
 };
 
 GType gst_panorama_get_type (void);

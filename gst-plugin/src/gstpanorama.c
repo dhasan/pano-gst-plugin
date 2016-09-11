@@ -63,7 +63,8 @@
 #include <gst/gst.h>
 #include <glib.h>
 #include <glib/gprintf.h>
-
+#include <stdio.h>
+#include <string.h>
 #include "gstpanorama.h"
 
 
@@ -240,6 +241,14 @@ gst_panorama_class_init (GstPanoramaClass * klass){
         g_param_spec_pointer ("vector", "Vector", "Structure to phi and theta",
             G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
+    g_object_class_install_property (gobject_class, PROP_XYMAP,
+        g_param_spec_string ("xymap", "xymap", "Location of xymap file",
+            DEFAULT_XYMAPFILE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+    g_object_class_install_property (gobject_class, PROP_BMAP,
+        g_param_spec_string ("bmap", "bmap", "Location of bmap file",
+            DEFAULT_BMAPFILE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
     gst_element_class_set_details_simple(gstelement_class,
         "Panorama",
         "FIXME:Generic",
@@ -278,13 +287,13 @@ static void
 gst_my_filter_loop (GstPad *pad)
 {
     GstFlowReturn ret;
-    guint64 len;
-    GstFormat fmt = GST_FORMAT_BYTES;
+   // guint64 len;
+   // GstFormat fmt = GST_FORMAT_BYTES;
     GstBuffer *buf = NULL;
-    GstBuffer *outbuffer;
+//    GstBuffer *outbuffer;
     GstPanorama *filter = NULL;
-    gboolean padfound = FALSE;
-    gint i,padid;
+//    gboolean padfound = FALSE;
+    gint padid;
     GstMapInfo info;
 
  // gobject_class = (GObjectClass *) klass;
@@ -401,8 +410,8 @@ gst_my_filter_activate_pull (GstPad    * pad,
                  gboolean    active)
 {
     gboolean res;
-   // GstMyFilter *filter = GST_MY_FILTER (parent);
-    GstPanorama *filter = GST_PANORAMA (parent);
+
+    //GstPanorama *filter = GST_PANORAMA (parent);
 
     switch (mode) {
         case GST_PAD_MODE_PUSH:
@@ -458,6 +467,7 @@ activate_push:
     }
 }
 
+#if 0
 static gboolean gst_my_filter_sink_query (GstPad *pad, GstObject *parent, GstQuery *query){
     gboolean ret;
     GstPanorama *filter = GST_PANORAMA(parent);
@@ -502,7 +512,7 @@ static gboolean gst_my_filter_sink_query (GstPad *pad, GstObject *parent, GstQue
     return ret;
 }
 
-
+#endif
 
 /* initialize the new element
  * instantiate pads and add them to element
@@ -516,7 +526,7 @@ gst_panorama_init (GstPanorama * filter){
     for (i=0;i<SINKPADCNT;i++){
 
         filter->sinkpads[i] = gst_pad_new_from_static_template (&sink_factory, padnames[i]);
-        gst_pad_set_query_function (filter->sinkpads[i], gst_my_filter_sink_query);
+        //gst_pad_set_query_function (filter->sinkpads[i], gst_my_filter_sink_query);
         gst_pad_set_event_function (filter->sinkpads[i], GST_DEBUG_FUNCPTR(gst_panorama_sink_event));
         gst_pad_set_activate_function (filter->sinkpads[i], gst_my_filter_activate);
         gst_pad_set_activatemode_function (filter->sinkpads[i], gst_my_filter_activate_pull);
@@ -643,15 +653,15 @@ gst_panorama_get_property (GObject * object, guint prop_id,
         break;
     }
 }
-
+#if 0
 static gboolean gst_panorama_setoutcaps (GstPanorama *filter, GstCaps *caps){
 
     GstStructure *structure, *othersstructure;
 
-    int rate, channels;
+    //int rate, channels;
     gboolean ret;
     //GstCaps *outcaps;
-    GstCaps *othercaps, *newcaps;
+    GstCaps *othercaps;//, *newcaps;
     gint width,height;
     const gchar *format;
 
@@ -721,6 +731,7 @@ static gboolean gst_panorama_setoutcaps (GstPanorama *filter, GstCaps *caps){
     g_print("everything is fine!\n");
     return TRUE;
 }
+#endif 
 
 /* this function handles sink events */
 static gboolean
@@ -728,7 +739,7 @@ gst_panorama_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 {
   GstPanorama *filter;
   gboolean ret;
-  gint width,height;
+  //gint width,height;
   const GstStructure *str;
   const gchar *format;
 
@@ -746,20 +757,24 @@ gst_panorama_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
             gst_event_parse_caps (event, &caps);
 
             str = gst_caps_get_structure (caps, 0);
-            if (!gst_structure_get_int (str, "width", &width) ||
-                !gst_structure_get_int (str, "height", &height)) {
+            if (!gst_structure_get_int (str, "width", &filter->inwidth) ||
+                !gst_structure_get_int (str, "height", &filter->inheight)) {
                 g_print ("No input width/height available\n");
                 return FALSE;
 
             }else{
-                g_print("sizes: %d %d\n", width, height);
+                g_print("sizes: %d %d\n", filter->inwidth, filter->inheight);
                 format  = gst_structure_get_string(str, "format");
                 if (format){
                     if (!strcmp(format, "ARGB")){
-                        filter->inbuffersize = 4*width*height;
+                        filter->inbuffersize = 4*filter->inwidth*filter->inheight;
+                    }else{
+                        g_print ("format NOT supported\n");
+                        return FALSE;
                     }
                 }else{
                     g_print ("format NOT available\n");
+                    return FALSE;
                 }
             }
 
@@ -768,25 +783,36 @@ gst_panorama_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
             othercaps = gst_pad_get_allowed_caps (filter->outsrcpad);
             othersstructure = gst_caps_get_structure (othercaps, 0);
 
-            ret = gst_structure_get_int (othersstructure, "width", &width);
+            ret = gst_structure_get_int (othersstructure, "width", &filter->outwidth);
             if (ret){
-                g_print("peer width is: %d\n",width);
+                g_print("peer width is: %d\n",filter->outwidth);
             }else{
-                width = DEFAULT_OUTWIDTH;
-                gst_structure_set (othersstructure, "width", G_TYPE_INT, width, NULL);
+                filter->outwidth = DEFAULT_OUTWIDTH;
+                gst_structure_set (othersstructure, "width", G_TYPE_INT, filter->outwidth, NULL);
             }
 
-            ret = gst_structure_get_int (othersstructure, "height", &height);
+            ret = gst_structure_get_int (othersstructure, "height", &filter->outheight);
             if (ret){
-               g_print("peer height is: %d\n",height);
+               g_print("peer height is: %d\n",filter->outheight);
             }else{
-                height = DEFAULT_OUTHEIGHT;
-                gst_structure_set (othersstructure, "height", G_TYPE_INT, height, NULL);
+                filter->outheight = DEFAULT_OUTHEIGHT;
+                gst_structure_set (othersstructure, "height", G_TYPE_INT, filter->outheight, NULL);
+            }
+
+            format  = gst_structure_get_string(othersstructure, "format");
+            if (format){
+                if (!strcmp(format, "ARGB")){
+                    filter->outbuffersize = 4*filter->outwidth*filter->outheight;
+                }else{
+                    g_print ("format NOT supported\n");
+                    return FALSE;
+                }
+            }else{
+                g_print ("format NOT available\n");
+                return FALSE;
             }
 
             g_print("out str: %s\n",gst_structure_to_string(othersstructure));
-
-
 
             ret = gst_pad_event_default (pad, parent, event);
         }
