@@ -30,7 +30,7 @@ plugin_LTLIBRARIES = libgstpanorama.la
 libgstpanorama_la_SOURCES = gstpanorama.c gstPanoramaplugin.c
 
 # compiler and linker flags used to compile this plugin, set in configure.ac
-libgstpanorama_la_CFLAGS = $(GST_CFLAGS)
+libgstpanorama_la_CFLAGS = $(GST_CFLAGS) -I/usr/local/cuda-7.5/samples/common/inc
 libgstpanorama_la_LIBADD = $(GST_LIBS)
 libgstpanorama_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 libgstpanorama_la_LIBTOOLFLAGS = --tag=disable-static

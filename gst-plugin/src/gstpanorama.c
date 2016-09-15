@@ -294,6 +294,7 @@ gst_my_filter_loop (GstPad *pad)
     GstPanorama *filter = NULL;
 //    gboolean padfound = FALSE;
     gint padid;
+    gpointer outdata;
     GstMapInfo info;
 
  // gobject_class = (GObjectClass *) klass;
@@ -324,7 +325,8 @@ gst_my_filter_loop (GstPad *pad)
                 gst_buffer_map (buf, &info, GST_MAP_READ);
                 //memset (info.data, 0xff, info.size);
                 //update source
-               // g_print("updating source %d\n",padid);
+                g_print("updating source %d\n",padid);
+                gstcuda_update_source(padid, info.data );
                 gst_buffer_unmap (buf, &info);
 
 
@@ -347,7 +349,10 @@ gst_my_filter_loop (GstPad *pad)
     if (g_atomic_int_compare_and_exchange(&filter->newframes, filter->newframemask, 0)){
         g_mutex_lock(&filter->processing);
 
-    //g_print("processing..\n");
+        g_print("processing..\n");
+        gstcuda_process();
+        gstcuda_get_output(outdata);
+        #error wrap and push
         // outbuffer = gst_buffer_new();
         // mem = gst_allocator_alloc (NULL, filter->outbuffersize, NULL);
         g_mutex_unlock(&filter->processing);
@@ -547,9 +552,12 @@ gst_panorama_init (GstPanorama * filter){
     filter->autoupdate = (DEFAULT_MATRIXAUTOUPDATE);
     filter->inbuffersize = DEFAULT_INBUFFERSIZE;
 
+    gstcuda_set_dims(3600, 1800, 1920,1080, 640,480);
     //udate static config
+    gstcuda_bmap_config(DEFAULT_BMAPFILE);
+    gstcuda_xymap_config(DEFAULT_XYMAPFILE);
     //udate matrix
-
+    gstcuda_update_matrix(120, filter->phi, filter->theta);
     //get newmask
     g_atomic_int_set(&filter->newframemask,0x0000001/*newmask*/);
 
@@ -571,6 +579,7 @@ gst_panorama_set_property (GObject * object, guint prop_id,
             if (filter->autoupdate){
                 g_mutex_lock(&filter->processing);
                 //update matrix
+                gstcuda_update_matrix(120, filter->phi, filter->theta);
                 //get newmask
                 g_atomic_int_set(&filter->newframemask,0x0000001/*newmask*/);
                 g_mutex_unlock(&filter->processing);
@@ -582,6 +591,7 @@ gst_panorama_set_property (GObject * object, guint prop_id,
             if (filter->autoupdate){
                 g_mutex_lock(&filter->processing);
                 //update matrix
+                gstcuda_update_matrix(120, filter->phi, filter->theta);
                 //get newmask
                 g_atomic_int_set(&filter->newframemask,0x0000001/*newmask*/);
                 g_mutex_unlock(&filter->processing);
@@ -591,6 +601,7 @@ gst_panorama_set_property (GObject * object, guint prop_id,
         case PROP_MATRIXUPDATE:
             g_mutex_lock(&filter->processing);
             //update matrix
+            gstcuda_update_matrix(120, filter->phi, filter->theta);
             //get newmask
             g_atomic_int_set(&filter->newframemask,0x0000001/*newmask*/);
             g_mutex_unlock(&filter->processing);
@@ -609,6 +620,7 @@ gst_panorama_set_property (GObject * object, guint prop_id,
 
             g_mutex_lock(&filter->processing);
             //update matrix
+            gstcuda_update_matrix(120, filter->phi, filter->theta);
             //get newmask
             g_atomic_int_set(&filter->newframemask,0x0000001/*newmask*/);
             g_mutex_unlock(&filter->processing);
@@ -814,6 +826,13 @@ gst_panorama_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 
             g_print("out str: %s\n",gst_structure_to_string(othersstructure));
 
+            //gstcuda_set_dims
+            gstcuda_set_dims(3600, 1800, filter->inwidth,
+                                        filter->inheight, 
+                                        filter->outwidth,
+                                        filter->outheight);
+            gstcuda_update_matrix(120, filter->phi, filter->theta);
+
             ret = gst_pad_event_default (pad, parent, event);
         }
         break;
@@ -836,6 +855,7 @@ gst_panorama_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
     int i;
     gint padid;
     gboolean padfound = FALSE;
+    gpointer outdata;
     filter = GST_PANORAMA (parent);
     g_debug("chain on %s\n", GST_PAD_NAME(pad));
     for (i=0;i<6;i++){
@@ -848,7 +868,10 @@ gst_panorama_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
                     g_mutex_unlock(&filter->processing);
                     g_atomic_int_or(&filter->newframes, padmasks[padid]);
                     //update source
-                   // g_print("updating source %d\n",padid);
+                    g_print("updating source %d\n",padid);
+                    gst_buffer_map (buf, &info, GST_MAP_READ);
+                    gstcuda_update_source(padid, info.data );
+                    gst_buffer_unmap (buf, &info);
 
                 }
                 break;
@@ -873,7 +896,8 @@ gst_panorama_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 
     if (g_atomic_int_compare_and_exchange(&filter->newframes, filter->newframemask, 0)){
         g_mutex_lock(&filter->processing);
-
+        gstcuda_process();
+        gstcuda_get_output(outdata);
         g_mutex_unlock(&filter->processing);
     }else{
 

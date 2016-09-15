@@ -47,6 +47,7 @@
 #define __GST_PANORAMA_H__
 
 #include <gst/gst.h>
+#include <helper_math.h>
 
 #define SINKPADCNT  (6)
 
@@ -146,6 +147,7 @@ struct _GstPanorama
 {
     GstElement element;
     GstAllocator *cudaallocator;
+    void *cudapano;
 
     GstPad *sinkpads[SINKPADCNT];
     // GstPad *leftsinkpad;
