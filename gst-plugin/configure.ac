@@ -29,9 +29,6 @@ AC_CHECK_PROG(HAVE_PKGCONFIG, pkg-config, [ ], [
   AC_MSG_ERROR([You need to have pkg-config installed!])
 ])
 
-dnl TODO: fill in your package name and package version here
-AC_INIT([cuda],[7.5.18])
-
 dnl Check for the required version of GStreamer core (and gst-plugins-base)
 dnl This will export GST_CFLAGS and GST_LIBS variables for use in Makefile.am
 dnl

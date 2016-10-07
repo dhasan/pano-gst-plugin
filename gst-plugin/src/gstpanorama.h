@@ -47,20 +47,37 @@
 #define __GST_PANORAMA_H__
 
 #include <gst/gst.h>
-#include <helper_math.h>
+//#include <pthread.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+//#include <mqueue.h>
+
+//#include < pthread.h >
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#include <sys/stat.h>
+#include <errno.h>
+#include <string.h>
+
+
+
+//#include <helper_math.h>
 
 #define SINKPADCNT  (6)
 
 #define DEFAULT_INBUFFERSIZE  (4*1920*1080)
 #define DEFAULT_PHI         (90)
-#define DEFAULT_THETA       (90)
+#define DEFAULT_THETA       (0)
 #define DEFAULT_MATRIXAUTOUPDATE (TRUE)
 
 #define DEFAULT_OUTWIDTH (640)
 #define DEFAULT_OUTHEIGHT (480)
+#define QUEUE_NAME "/panoqueue"
 
-#define DEFAULT_XYMAPFILE "xymap.dat"
-#define DEFAULT_BMAPFILE "bmap.dat"
+#define DEFAULT_XYMAPFILE "/home/ubuntu/pano/xymap.bin"
+#define DEFAULT_BMAPFILE "/home/ubuntu/pano/bmap.bin"
 
 
 enum{
@@ -72,6 +89,18 @@ enum{
     TOPSINKID,
     BOTTOMSINKID
 
+};
+
+enum {  
+    GSTCUDA_UPDATE_SOURCE = 0,
+    GSTCUDA_PROCESS,
+    GSTCUDA_GET_OUTPUT,
+    GSTCUDA_SET_DIMS,
+    GSTCUDA_BMAP_COFIG,
+    GSTCUDA_XYMAP_CONFIG,
+    GSTCUDA_UPDATE_MATRIX,
+    GSTCUDA_SYNC_ALL,
+    GSTCUDA_MAX
 };
 
 G_BEGIN_DECLS
@@ -133,6 +162,14 @@ typedef struct
 
 }CudaHostMemory;
 
+struct cudamsg {
+
+    int type;
+    unsigned int payload[8];
+    char text[16];
+    float fracs[3];
+};
+
 
 
 
@@ -168,8 +205,8 @@ struct _GstPanorama
 
 
     /*The angle of view*/
-    gint phi;
-    gint theta;
+    float phi;
+    float theta;
     struct PanoramaVector vector;
     guint inbuffersize;
     guint outbuffersize;
@@ -177,6 +214,10 @@ struct _GstPanorama
     gint inheight;
     gint outwidth;
     gint outheight;
+
+    // pthread_t thread;
+    // mqd_t mqs;
+    // mqd_t mqc;
 
 // gboolean silent;
 };
