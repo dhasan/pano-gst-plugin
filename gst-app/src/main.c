@@ -106,14 +106,14 @@ int main (int argc, char *argv[]){
 			NULL);
 
 	vcaps = gst_caps_new_simple ("video/x-raw",
-			"format", G_TYPE_STRING, "xBGR",
+			"format", G_TYPE_STRING, "GRAY8",
 			"width", G_TYPE_INT, 1920,
 			"height", G_TYPE_INT, 1080,
 			"framerate", GST_TYPE_FRACTION, 30, 1,
 			NULL);
 
 	outcaps = gst_caps_new_simple ("video/x-raw",
-			"format", G_TYPE_STRING, "xBGR",
+			"format", G_TYPE_STRING, "GRAY8",
 			"width", G_TYPE_INT, 640,
 			"height", G_TYPE_INT, 480,
 			"framerate", GST_TYPE_FRACTION, 30, 1,
