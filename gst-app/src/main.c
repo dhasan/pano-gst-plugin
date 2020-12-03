@@ -31,6 +31,7 @@ struct panodata{
 	GstElement *jpegparse[6];
 	GstElement *jpegdec[6];
 
+	GstElement *videoconverttemp;
 };
 
 static gboolean
@@ -63,7 +64,7 @@ bus_call (GstBus     *bus,
     }
 
     default:
-    	g_print ("Bus call :%d\n", GST_MESSAGE_TYPE (msg));
+    //	g_print ("Bus call :%d\n", GST_MESSAGE_TYPE (msg));
     break;
   }
 
@@ -73,10 +74,11 @@ bus_call (GstBus     *bus,
 int main (int argc, char *argv[]){
 
 	const gchar *v4l2srcname[6] = {"v4l2src0", "v4l2src1", "v4l2src2", "v4l2src3", "v4l2src4", "v4l2src5"};
-	const gchar *v4l2loc[6] = {"/dev/video0", "/dev/video1", "/dev/video2", "/dev/video3", "/dev/video4", "/dev/video5"};
+//	const gchar *v4l2loc[6] = {"/dev/video0", "/dev/video1", "/dev/video2", "/dev/video3", "/dev/video4", "/dev/video5"};
 	const gchar *jpegdecname[6] ={"jpegdec0", "jpegdec1", "jpegdec2", "jpegdec3", "jpegdec4", "jpegdec5"};
 	const gchar *jpegparsename[6] = {"jpegparse0", "jpegparse1", "jpegparse2", "jpegparse3", "jpegparse4", "jpegparse5"};
 
+	const gchar *freezename[6] ={"freeze0", "freeze1", "freeze2", "freeze3", "freeze4", "freeze5"};
 	const gchar *panopadnames[6] ={"frontsink", "rightsink", "leftsink", "backsink", "topsink", "bottomsink"};
 	GstCaps *jcaps, *vcaps, *outcaps;
 
@@ -106,14 +108,16 @@ int main (int argc, char *argv[]){
 			NULL);
 
 	vcaps = gst_caps_new_simple ("video/x-raw",
-			"format", G_TYPE_STRING, "GRAY8",
+			"format", G_TYPE_STRING, "I420",
 			"width", G_TYPE_INT, 1920,
 			"height", G_TYPE_INT, 1080,
 			"framerate", GST_TYPE_FRACTION, 30, 1,
 			NULL);
 
 	outcaps = gst_caps_new_simple ("video/x-raw",
-			"format", G_TYPE_STRING, "GRAY8",
+
+			"format", G_TYPE_STRING, "I420",
+
 			"width", G_TYPE_INT, 640,
 			"height", G_TYPE_INT, 480,
 			"framerate", GST_TYPE_FRACTION, 30, 1,
@@ -127,47 +131,105 @@ int main (int argc, char *argv[]){
 	g_assert(pano.videoconvert);
 	gst_bin_add(GST_BIN (pano.pipeline), pano.videoconvert);
 
-	pano.xvimagesink = gst_element_factory_make ("ximagesink", "ximagesink0");
+	// pano.videoconverttemp = gst_element_factory_make ("videoconvert", "videoconverttemp0");
+	// g_assert(pano.videoconverttemp);
+	// gst_bin_add(GST_BIN (pano.pipeline), pano.videoconverttemp);
+
+	pano.xvimagesink = gst_element_factory_make ("nveglglessink", "ximagesink0");
 	g_assert(pano.xvimagesink);
 	gst_bin_add(GST_BIN (pano.pipeline), pano.xvimagesink);
 
-#if 0
-	for (i=0;i<6;i++){
-		pano.v4l2source[i] = gst_element_factory_make ("v4l2src", v4l2srcname[i]);
-		g_assert(pano.v4l2source[i]);
-		//g_object_set(G_OBJECT (pano.v4l2source[i]), "location", "hd.jpg", NULL);
-		g_object_set(G_OBJECT (pano.v4l2source[i]), "device", v4l2loc[i],NULL);
-		gst_bin_add(GST_BIN (pano.pipeline), pano.v4l2source[i]);
-
-		pano.jpegparse[i] = gst_element_factory_make ("jpegparse", jpegparsename[i]);
-		g_assert(pano.jpegparse[i]);
-		gst_bin_add(GST_BIN (pano.pipeline), pano.jpegparse[i]);
 
 
-		pano.jpegdec[i] = gst_element_factory_make ("jpegdec", jpegdecname[i]);
-		g_assert(pano.jpegdec[i]);
-		gst_bin_add(GST_BIN (pano.pipeline), pano.jpegdec[i]);
+////
+	//pano.v4l2source[0] = gst_element_factory_make ("videotestsrc", "v4l2src0");
+	//g_assert(pano.v4l2source[0]);
+	//g_object_set(G_OBJECT (pano.v4l2source[0]), "device", "/dev/video0", NULL);
+	//gst_bin_add(GST_BIN (pano.pipeline), pano.v4l2source[0]);
 
-		gst_element_link_filtered(pano.v4l2source[i], pano.jpegparse[i], jcaps);
-		gst_element_link(pano.jpegparse[i], pano.jpegdec[i]);
-		gst_element_link_pads_filtered (pano.jpegdec[i],NULL, pano.panorama, panopadnames[i], vcaps);
-	}
-#else
+	//pano.jpegdec[0] = gst_element_factory_make ("nvjpegdec", "nvjpegdec0");
+	//g_assert(pano.jpegdec[0]);
+	//gst_bin_add(GST_BIN (pano.pipeline), pano.jpegdec[0]);
+
+	//if (gst_element_link_filtered(pano.v4l2source[0], pano.jpegdec[0], jcaps)==FALSE){
+	//	g_print("cant link v4l2 and jpegdec 0\n");
+	//}
+
+	// if (gst_element_link(pano.jpegdec[0], pano.videoconverttemp)==FALSE){
+	// 	g_print("cant convert temp2\n");
+	// }
+
+	//if (gst_element_link_pads_filtered(pano.jpegdec[0], "src", pano.panorama, panopadnames[0], vcaps)==FALSE){
+//			g_print("cant link %s\n", panopadnames[0]);
+//	}
+
+
+
+/////
+
+#if 1
 	for (i=0;i<6;i++){
 		pano.v4l2source[i] = gst_element_factory_make ("videotestsrc", v4l2srcname[i]);
 		g_assert(pano.v4l2source[i]);
-//		g_object_set(G_OBJECT (pano.v4l2source[i]), "is-live", TRUE, NULL);
-
+		//g_object_set(G_OBJECT (pano.v4l2source[i]), "location", "hd.jpg", NULL);
+		//g_object_set(G_OBJECT (pano.v4l2source[i]), "device", v4l2loc[i],NULL);
 		gst_bin_add(GST_BIN (pano.pipeline), pano.v4l2source[i]);
-		if (gst_element_link_pads_filtered (pano.v4l2source[i], "src", pano.panorama, panopadnames[i], vcaps)==FALSE){
-			g_print("cant link %s\n", panopadnames[i]);
+
+//		pano.jpegparse[i] = gst_element_factory_make ("jpegparse", jpegparsename[i]);
+//		g_assert(pano.jpegparse[i]);
+//		gst_bin_add(GST_BIN (pano.pipeline), pano.jpegparse[i]);
+
+
+//		pano.jpegdec[i] = gst_element_factory_make ("jpegdec", jpegdecname[i]);
+//		g_assert(pano.jpegdec[i]);
+//		gst_bin_add(GST_BIN (pano.pipeline), pano.jpegdec[i]);
+
+		//gst_element_link_filtered(pano.v4l2source[i], pano.jpegparse[i], jcaps);
+		//gst_element_link(pano.jpegparse[i], pano.jpegdec[i]);
+		//gst_element_link_pads_filtered (pano.jpegdec[i],NULL, pano.panorama, panopadnames[i], vcaps);
+	
+if (gst_element_link_pads_filtered (pano.v4l2source[i], "src", pano.panorama, panopadnames[i], vcaps)==FALSE){
+                        g_print("44cant link %s\n", panopadnames[i]);
+                }
+
+}
+#else
+	GstElement *freeze[6];
+	for (i=1;i<6;i++){
+		pano.v4l2source[i] = gst_element_factory_make ("filesrc", v4l2srcname[i]);
+		g_assert(pano.v4l2source[i]);
+		g_object_set(G_OBJECT (pano.v4l2source[i]), "location", "1.avi", NULL);
+		//g_object_set(G_OBJECT (pano.v4l2source[i]), "is-live", TRUE, "do-timestamp", TRUE, NULL);
+		gst_bin_add(GST_BIN (pano.pipeline), pano.v4l2source[i]);
+
+		pano.jpegdec[i] = gst_element_factory_make ("nvjpegdec", jpegdecname[i]);
+		g_assert(pano.jpegdec[i]);
+		gst_bin_add(GST_BIN (pano.pipeline), pano.jpegdec[i]);
+		
+
+		// freeze[i] = gst_element_factory_make ("imagefreeze", freezename[i]);
+		// g_assert(freeze[i]);
+		// gst_bin_add(GST_BIN (pano.pipeline), freeze[i]);
+
+		if (gst_element_link_filtered(pano.v4l2source[i], pano.jpegdec[i], jcaps)==FALSE){
+			g_print("22cant link v4l2 and jpegdec 0\n");
+		}
+
+		 // if (gst_element_link(pano.jpegdec[i], freeze[i])==FALSE){
+		 // 	g_print("33cant convert temp2\n");
+		 // }
+
+		
+		if (gst_element_link_pads_filtered (pano.jpegdec[i], "src", pano.panorama, panopadnames[i], vcaps)==FALSE){
+			g_print("44cant link %s\n", panopadnames[i]);
 		}
 	}
 
 #endif
 
-	gst_element_link_filtered(pano.panorama, pano.videoconvert,outcaps);
-	gst_element_link(pano.videoconvert, pano.xvimagesink );
+gst_element_link_filtered(pano.panorama, pano.xvimagesink, outcaps);
+	//gst_element_link_filtered(pano.panorama, pano.videoconvert,outcaps);
+	//gst_element_link(pano.videoconvert, pano.xvimagesink );
 
 
 	// gst_caps_unref (jcaps);
@@ -186,4 +248,3 @@ int main (int argc, char *argv[]){
 	exit(0);
 
 }
-

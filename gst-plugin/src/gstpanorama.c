@@ -88,14 +88,17 @@ enum
   PROP_MATRIXAUTOUPDATE,
   PROP_VECTOR,
   PROP_XYMAP,
-  PROP_BMAP
+  PROP_BMAP,
+  PROP_INTERMAP
 };
 
 
-void gstcuda_update_source(int sourceid, unsigned int *data);
-void gstcuda_process();
-void gstcuda_get_output(void *out);
-void gstcuda_set_dims(
+void gstcuda_update_source(void *priv, int sourceid, unsigned int *data, int id);
+void gstcuda_process(void *priv, int id);
+void gstcuda_get_output(void *priv, void *out, int id);
+void gstcuda_set_dims(  void *priv,
+                        int colorspace,
+                        int yuvtogray8,
                         int pano_width,
                         int pano_height,
                         int source_width,
@@ -103,12 +106,27 @@ void gstcuda_set_dims(
                         int dest_width,
                         int dest_height
                     );
-void gstcuda_bmap_config(const char *bmapname);
-void gstcuda_xymap_config(const char *xymapname);
-void gstcuda_update_matrix(float fov, float phi, float theta);
-void gstcuda_sync_all();
-void *gstcuda_host_alloc(size_t size);
-void gstcuda_host_free(void *mem);
+void gstcuda_bmap_config(void *priv, const char *bmapname);
+void gstcuda_intermap_config(void *priv, const char *intmapname);
+void gstcuda_xymap_config(void *priv, const char *xymapname);
+void gstcuda_update_matrix(void *priv, float fov, float phi, float theta);
+void gstcuda_sync_all(void *priv);
+void *gstcuda_host_alloc(void *priv, size_t size);
+void gstcuda_host_free(void *priv, void *mem);
+
+void gstcuda_source_alloc(
+                        void *priv, 
+                        int colorspace,
+                        int yuvtogray8,
+                        int source_width,
+                        int source_height,
+                        int id);
+void gstpano_output_alloc(
+                        void *priv,
+                        int colorspace,
+                        int yuvtogray8,
+                        int dest_width,
+                        int dest_height);
 
 # define M_PI           3.14159265358979323846
 static float deg_to_rad(float deg){
@@ -129,7 +147,7 @@ static GstStaticPadTemplate sink_factory = GST_STATIC_PAD_TEMPLATE ("sink",
     //GST_STATIC_CAPS ("ANY")
     GST_STATIC_CAPS (
         "video/x-raw, "
-        "format = (string) xBGR, "
+        "format = (string) {xBGR, I420, GRAY8}, "
         "width = (int) [ 320, 1920 ], "
         "height = (int) [ 240, 1080 ], "
         "framerate = (fraction)30/1"
@@ -143,7 +161,7 @@ static GstStaticPadTemplate outsrc_factory = GST_STATIC_PAD_TEMPLATE ("outsrc",
    // GST_STATIC_CAPS ("ANY")
      GST_STATIC_CAPS (
         "video/x-raw, "
-        "format = (string) xBGR, "
+        "format = (string) {xBGR, I420, GRAY8, RGBA, RGB}, "
         "width = (int) [ 320, 1920 ], "
         "height = (int) [ 240, 1880 ], "
         "framerate = (fraction)30/1"
@@ -167,8 +185,6 @@ static GstFlowReturn gst_panorama_chain (GstPad * pad, GstObject * parent, GstBu
 
 /* GObject vmethod implementations */
 
-
-
 #if 1
 static gpointer
 _my_mem_map (CudaHostMemory * mem, gsize maxsize, GstMapFlags flags)
@@ -180,13 +196,13 @@ _my_mem_map (CudaHostMemory * mem, gsize maxsize, GstMapFlags flags)
             break;
 
         //res = g_malloc (maxsize);
-        res = gstcuda_host_alloc(maxsize);
+        res = gstcuda_host_alloc(mem->cudapriv, maxsize);
 
         if (g_atomic_pointer_compare_and_exchange (&mem->data, NULL, res))
             break;
 
         //g_free (res);
-        gstcuda_host_free(res);
+        gstcuda_host_free(mem->cudapriv, res);
     }
 
     return res;
@@ -220,8 +236,11 @@ _my_alloc (GstAllocator * allocator, gsize size, GstAllocationParams * params){
     gsize maxsize = size + params->prefix + params->padding;
 
    // g_print ("alloc from allocator %p", allocator);
-
+    PanoramaAllocator *pa = GST_PANORAMA_ALLOCATOR(allocator);
     mem = g_slice_new (CudaHostMemory);
+   // mem->cudapriv = gpriv;
+    mem->cudapriv = pa->cudapriv;
+
 
     gst_memory_init (GST_MEMORY_CAST (mem), params->flags, allocator, NULL,
         maxsize, params->align, params->prefix, size);
@@ -236,7 +255,7 @@ _my_free (GstAllocator * allocator, GstMemory * mem)
 {
     CudaHostMemory *mmem = (CudaHostMemory *) mem;
 
-    gstcuda_host_free(mmem->data);
+    gstcuda_host_free(mmem->cudapriv, mmem->data);
     g_slice_free (CudaHostMemory, mmem);
 }
 
@@ -298,6 +317,10 @@ gst_panorama_class_init (GstPanoramaClass * klass){
     g_object_class_install_property (gobject_class, PROP_BMAP,
         g_param_spec_string ("bmap", "bmap", "Location of bmap file",
             DEFAULT_BMAPFILE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+    g_object_class_install_property (gobject_class, PROP_INTERMAP,
+        g_param_spec_string ("intermap", "intermap", "Location of xymap file",
+            DEFAULT_INTERMAPFILE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
     gst_element_class_set_details_simple(gstelement_class,
         "Panorama",
@@ -369,15 +392,15 @@ gst_my_filter_loop (GstPad *pad)
         ret = gst_pad_pull_range (pad, 0, filter->inbuffersize, &buf);
         if (ret == GST_FLOW_OK) {
 
-            if (g_mutex_trylock(&filter->processing)){
-                g_mutex_unlock(&filter->processing);
-                g_atomic_int_or(&filter->newframes, padmasks[padid]);
+            if (g_mutex_trylock(&filter->processing[filter->ind])){
+                g_mutex_unlock(&filter->processing[filter->ind]);
+                g_atomic_int_or(&filter->newframes[filter->ind], padmasks[padid]);
 
                 gst_buffer_map (buf, &info, GST_MAP_READ);
                 //memset (info.data, 0xff, info.size);
                 //update source
               //  g_print("updating source %d\n",padid);
-                gstcuda_update_source(padid, (unsigned int *)info.data );
+                gstcuda_update_source(filter->cudapriv, padid, (unsigned int *)info.data, filter->ind);
                 gst_buffer_unmap (buf, &info);
 
 
@@ -395,23 +418,23 @@ gst_my_filter_loop (GstPad *pad)
     }
 
     //Just in case
-    g_atomic_int_and(&filter->newframes, filter->newframemask);
+    g_atomic_int_and(&filter->newframes[filter->ind], filter->newframemask);
 
-    if (g_atomic_int_compare_and_exchange(&filter->newframes, filter->newframemask, 0)){
-        g_mutex_lock(&filter->processing);
+    if (g_atomic_int_compare_and_exchange(&filter->newframes[filter->ind], filter->newframemask, 0)){
+        g_mutex_lock(&filter->processing[filter->ind]);
 
         g_print("processing..\n");
-        gstcuda_process();
+        gstcuda_process(filter->cudapriv, !filter->ind);
         g_print("processing done.\n");
 
         outbuf = gst_buffer_new_allocate (filter->cudaallocator, filter->outbuffersize, NULL);
         gst_buffer_map (outbuf, &info, GST_MAP_WRITE);
         g_print("start memcpy\n");
-        gstcuda_get_output(info.data);
+        gstcuda_get_output(filter->cudapriv, info.data, !filter->ind);
         gst_buffer_unmap (outbuf, &info);
     
         gst_pad_push(filter->outsrcpad, outbuf);
-        g_mutex_unlock(&filter->processing);
+        g_mutex_unlock(&filter->processing[filter->ind]);
     }else{
 
     }
@@ -537,82 +560,145 @@ static gboolean gst_my_filter_sink_query (GstPad *pad, GstObject *parent, GstQue
     GstCaps *caps;
     size_t size,min,max;
 //  GstQuery *query;
-  GstStructure *structure;
-  GstBufferPool *pool;
-  GstStructure *config;
+    GstStructure *structure;
+  
 
 
     switch (GST_QUERY_TYPE (query)) {
         case GST_QUERY_CAPS:
-            g_print("caps..a.......................kkkkkkkkkkkkkkkkkk...........");
+        //    g_print("caps..a.......................kkkkkkkkkkkkkkkkkk...........");
         break;
 
-        case GST_QUERY_ALLOCATION:
-            /* find a pool for the negotiated caps now */
-            //query = gst_query_new_allocation (caps, TRUE);
+        
 
-            if (!gst_pad_peer_query (filter->outsrcpad, query)) {
-                /* query failed, not a problem, we use the query defaults */
-            }
+///////////////////////
 
-            if (gst_query_get_n_allocation_pools (query) > 0) {
-                /* we got configuration from our peer, parse them */
-                gst_query_parse_nth_allocation_pool (query, 0, &pool, &size, &min, &max);
-            } else {
-                pool = gst_buffer_pool_new ();
-                size = 12*1920*1080*4;
-                min = 6;
-                max = 12;
-            }
-
-            // if (pool == NULL) {
-            //      we did not get a pool, make one ourselves then 
-            //     pool = gst_video_buffer_pool_new ();
-            // }
-
+        case GST_QUERY_ALLOCATION:{
+       
+#if 1
+            g_print("alocation query ----------------------------------------------------------------------------------\n");
+            GstBufferPool *pool;
+            GstStructure *config;
+            GstCaps *caps;
             
-            config = gst_buffer_pool_get_config (pool);
-            
-           
-           // gst_buffer_pool_config_add_option (config, GST_BUFFER_POOL_OPTION_VIDEO_META);
-            gst_buffer_pool_config_set_params (config, caps, size, min, max);
-            gst_buffer_pool_config_set_allocator (config, filter->cudaallocator, NULL);
-            gst_buffer_pool_set_config (pool, config);
+            gboolean need_pool;
+            guint size;
+            GstAllocator *allocator;
+            GstAllocationParams params;
 
-            /* and activate */
-            gst_buffer_pool_set_active (pool, TRUE);
-        break;
-
-#if 0
-            g_print("query..a.......................kkkkkkkkkkkkkkkkkk...........");
             gst_allocation_params_init (&params);
+
             gst_query_parse_allocation (query, &caps, &need_pool);
 
             if (!caps) {
-               // GST_ERROR ("error: allocation query without caps");
-                g_error ("error: allocation query without caps");
+                GST_ERROR ("allocation query without caps");
                 return TRUE;
             }
 
-            GstBufferPool *pool = gst_buffer_pool_new ();
-            GstStructure *conf = gst_buffer_pool_get_config (pool);
-        //todo: get sizes from caps
-            gst_buffer_pool_config_set_params (conf, caps, 12*1920*1080, 6, 12);
+            // if (!gst_video_info_from_caps (&info, caps)) {
+            //     g_print ("allocation query with invalid caps");
+            //     return TRUE;
+            // }
 
-          //  gst_allocator_register("GstCUDA", &allocator);
-            gst_buffer_pool_config_set_allocator (conf, filter->cudaallocator, &params);
-            gst_buffer_pool_set_config (pool, conf);
+            //g_mutex_lock (state->queue_lock);
+            pool = NULL;//state->pool ? gst_object_ref (state->pool) : NULL;
+            //g_mutex_unlock (state->queue_lock);
 
-           gst_query_add_allocation_pool (query, pool, 12*1920*1080, 0, 0);
-           gst_object_unref (pool);
+            if (pool) {
+                GstCaps *pcaps;
+
+                /* we had a pool, check caps */
+
+                config = gst_buffer_pool_get_config (pool);
+                gst_buffer_pool_config_get_params (config, &pcaps, &size, NULL, NULL);
+                g_print ("check existing pool caps %" GST_PTR_FORMAT
+                        " with new caps %" GST_PTR_FORMAT, pcaps, caps);
+
+                if (!gst_caps_is_equal (caps, pcaps)) {
+                    g_print ("pool has different caps");
+                    /* different caps, we can't use this pool */
+                    gst_object_unref (pool);
+                    pool = NULL;
+                }
+            
+                gst_structure_free (config);
+            }
+
+            g_print ("pool %p", pool);
+            if (pool == NULL && need_pool) {
+                GstVideoInfo info;
+
+                // if (!gst_video_info_from_caps (&info, caps)) {
+                //     g_print ("allocation query has invalid caps %"
+                //         GST_PTR_FORMAT, caps);
+                //     return TRUE;
+            
+                // }
+
+                g_print ("create new pool");
+                pool = gst_buffer_pool_new();// (state, state->display);
+                g_print ("done create new pool %p", pool);
+                /* the normal size of a frame */
+                //size = filter->inwidth*filter->inheight*4;
+                size = filter->inbuffersize;
+
+                config = gst_buffer_pool_get_config (pool);
+                /* we need at least 2 buffer because we hold on to the last one */
+                gst_buffer_pool_config_set_params (config, caps, size, 4, 4);
+                gst_buffer_pool_config_set_allocator (config, NULL, &params);
+                if (!gst_buffer_pool_set_config (pool, config)) {
+                    gst_object_unref (pool);
+                    g_print ("failed to set pool configuration");
+                    return TRUE;
+                }
+            }
+
+            if (pool) {
+                /* we need at least 2 buffer because we hold on to the last one */
+                gst_query_add_allocation_pool (query, pool, size, 2, 0);
+                gst_object_unref (pool);
+            }
+
+            /* First the default allocator */
+            // if (!gst_egl_image_memory_is_mappable ()) {
+            //     allocator = gst_allocator_find (NULL);
+            //     gst_query_add_allocation_param (query, allocator, &params);
+            //     gst_object_unref (allocator);
+            // }
+
+            allocator = filter->cudaallocator; //gst_egl_image_allocator_obtain ();
+            g_print ("Allocator obtained %p", allocator);
+            gst_query_add_allocation_param (query, allocator, &params);
+
+            // if (!gst_egl_image_memory_is_mappable ())
+            //     params.flags |= GST_MEMORY_FLAG_NOT_MAPPABLE;
+            //     gst_query_add_allocation_param (query, allocator, &params);
+            //     gst_object_unref (allocator);
+
+            //     gst_query_add_allocation_meta (query, GST_VIDEO_META_API_TYPE, NULL);
+            //     gst_query_add_allocation_meta (query, GST_VIDEO_CROP_META_API_TYPE, NULL);
+            //     gst_query_add_allocation_meta (query,
+            //     GST_VIDEO_GL_TEXTURE_UPLOAD_META_API_TYPE, NULL);
+
+            //     g_print ("done alocation");
+            //     return TRUE;
+            // }
 #endif
+        }
+
+        break;
+
+
+
+        ///////////////////////////////
 
         default:
         /*just call the default handler*/
             ret = gst_pad_query_default (pad, parent, query);
         break;
+        
+        return ret;
     }
-    return ret;
 }
 
 #endif
@@ -625,6 +711,7 @@ gst_panorama_src_event (GstPad * pad, GstObject * parent, GstEvent * event){
     double x,y;
     char *type;
     filter = GST_PANORAMA (parent);
+//g_info("event.. %d \n", GST_EVENT_TYPE (event));
 #if 1
     switch (GST_EVENT_TYPE (event)) {
         case GST_EVENT_NAVIGATION:{
@@ -635,14 +722,11 @@ gst_panorama_src_event (GstPad * pad, GstObject * parent, GstEvent * event){
             if (g_str_equal (type, "mouse-move")) {
                 gst_structure_get_double (s, "pointer_x", &x);
                 gst_structure_get_double (s, "pointer_y", &y);
-                //g_print("x: %f y: %f\n", x,y);
-                g_mutex_lock(&filter->processing);
-                //update matrix
-                gstcuda_update_matrix(deg_to_rad(180), deg_to_rad(180.0f*(y/480.0f)), deg_to_rad(360.0f*(x/640.0f)));
-                //get newmask
-               // g_print("x: %f y: %f\n",360.0f*(x/640.0f), 180.0f*(x/480.0f));
-               // g_atomic_int_set(&filter->newframemask,0x0000001/*newmask*/);
-                g_mutex_unlock(&filter->processing);
+                g_error("x: %f y: %f\n", x,y);
+                g_mutex_lock(&filter->processing[filter->ind]);
+                gstcuda_update_matrix(filter->cudapriv, deg_to_rad(90), deg_to_rad(180.0f*(y/filter->outheight)), deg_to_rad(360.0f*(x/filter->outwidth)));
+                g_mutex_unlock(&filter->processing[filter->ind]);
+//ret = gst_pad_push_event (filter->src_pad, event);
             } else if (g_str_equal (type, "mouse-button-press")) {
                
             } else if (g_str_equal (type, "mouse-button-release")) {
@@ -650,12 +734,58 @@ gst_panorama_src_event (GstPad * pad, GstObject * parent, GstEvent * event){
             }
             break;
         }
+#if 1
+        case GST_EVENT_CAPS:{
+            GstCaps *caps;
+            const GstStructure *str;
+            const gchar *format;
+            gst_event_parse_caps (event, &caps);
+
+            str = gst_caps_get_structure (caps, 0);
+            if (!gst_structure_get_int (str, "width", &filter->outwidth) ||
+                !gst_structure_get_int (str, "height", &filter->outheight)) {
+                g_print ("No input width/height available\n");
+                return FALSE;
+
+            }else{
+                g_print("sizes: %d %d\n", filter->outwidth, filter->outheight);
+                format  = gst_structure_get_string(str, "format");
+                if (format){
+                    if (!strcmp(format, "xBGR")){
+                        filter->outbuffersize = 4*filter->outwidth*filter->outheight;
+                        filter->outcolorspace = 0;
+                    }else if (!strcmp(format, "I420")){
+                        filter->outcolorspace = 1;
+                        if (filter->yuvtogray8){
+                            filter->outbuffersize = filter->outwidth*filter->outheight;
+                        }else{
+                            filter->outbuffersize = 3*filter->outwidth*filter->outheight/2;
+                        }
+                        
+                    }else if (!strcmp(format, "GRAY8")){
+                        filter->outcolorspace = 2;
+                        filter->outbuffersize = filter->outwidth*filter->outheight;
+                    }else{
+                        g_print ("format NOT supported\n");
+                        return FALSE;
+                    }
+                }else{
+                    g_print ("format NOT available\n");
+                    return FALSE;
+                }
+
+                
+
+            }
+        }
+        break;
+#endif
         default:
         break;
     }
    // return gst_pad_event_default (pad, event);
 #endif
-    return TRUE;
+    return gst_pad_push_event (filter->outsrcpad, event);;
 }
 
 
@@ -678,12 +808,13 @@ gst_panorama_init (GstPanorama * filter){
         gst_pad_set_chain_function (filter->sinkpads[i], GST_DEBUG_FUNCPTR(gst_panorama_chain));
         gst_element_add_pad (GST_ELEMENT (filter), filter->sinkpads[i]);
     }
+    filter->ind = 0;
 
     filter->outsrcpad = gst_pad_new_from_static_template (&outsrc_factory, "outsrc");
     gst_pad_set_event_function (filter->outsrcpad, GST_DEBUG_FUNCPTR(gst_panorama_src_event));
 
     gst_element_add_pad (GST_ELEMENT (filter), filter->outsrcpad);
-    g_atomic_int_set(&filter->newframes,0);
+    g_atomic_int_set(&filter->newframes[filter->ind],0);
 
 
 
@@ -692,19 +823,27 @@ gst_panorama_init (GstPanorama * filter){
     filter->theta = deg_to_rad(DEFAULT_THETA);
     filter->autoupdate = (DEFAULT_MATRIXAUTOUPDATE);
     filter->inbuffersize = (DEFAULT_INBUFFERSIZE);
+    filter->yuvtogray8 = 0;
+    filter->configured = FALSE;
+    
 
-    gstcuda_set_dims(3600, 1800, 1920,1080, DEFAULT_OUTWIDTH,DEFAULT_OUTHEIGHT);   
-    //udate matrix
-    gstcuda_update_matrix(deg_to_rad(180), filter->phi, filter->theta);
-  
+    filter->cudapriv = gstcuda_priv_alloc();
+ 
     //udate static config
-    gstcuda_bmap_config(DEFAULT_BMAPFILE);
-    gstcuda_xymap_config(DEFAULT_XYMAPFILE);
+    gstcuda_bmap_config(filter->cudapriv, DEFAULT_BMAPFILE);
+    gstcuda_xymap_config(filter->cudapriv, DEFAULT_XYMAPFILE);
+    gstcuda_intermap_config(filter->cudapriv, DEFAULT_INTERMAPFILE);
 
     //get newmask
     g_atomic_int_set(&filter->newframemask,0x0000003F/*newmask*/);
 
+    
+
     filter->cudaallocator = g_object_new (panorama_allocator_get_type (), NULL);
+    PanoramaAllocator *pa = GST_PANORAMA_ALLOCATOR(filter->cudaallocator);
+    pa->cudapriv = filter->cudapriv;
+
+
     gst_allocator_register ("CudaHostMemoryAllocator", filter->cudaallocator);
 
 }
@@ -720,34 +859,34 @@ gst_panorama_set_property (GObject * object, guint prop_id,
         case PROP_PHI:
             filter->phi = deg_to_rad(g_value_get_int64 (value));
             if (filter->autoupdate){
-                g_mutex_lock(&filter->processing);
+                g_mutex_lock(&filter->processing[filter->ind]);
                 //update matrix
                 //gstcuda_update_matrix(deg_to_rad(120), filter->phi, filter->theta);
                 //get newmask
                 g_atomic_int_set(&filter->newframemask,0x0000001/*newmask*/);
-                g_mutex_unlock(&filter->processing);
+                g_mutex_unlock(&filter->processing[filter->ind]);
             }
         break;
 
         case PROP_THETA:
             filter->theta = deg_to_rad(g_value_get_int64 (value));
             if (filter->autoupdate){
-                g_mutex_lock(&filter->processing);
+                g_mutex_lock(&filter->processing[filter->ind]);
                 //update matrix
                 //gstcuda_update_matrix(deg_to_rad(120), filter->phi, filter->theta);
                 //get newmask
                 g_atomic_int_set(&filter->newframemask,0x0000001/*newmask*/);
-                g_mutex_unlock(&filter->processing);
+                g_mutex_unlock(&filter->processing[filter->ind]);
             }
         break;
 
         case PROP_MATRIXUPDATE:
-            g_mutex_lock(&filter->processing);
+            g_mutex_lock(&filter->processing[filter->ind]);
             //update matrix
             //gstcuda_update_matrix(deg_to_rad(120), filter->phi, filter->theta);
             //get newmask
             g_atomic_int_set(&filter->newframemask,0x0000001/*newmask*/);
-            g_mutex_unlock(&filter->processing);
+            g_mutex_unlock(&filter->processing[filter->ind]);
 
         break;
 
@@ -761,25 +900,30 @@ gst_panorama_set_property (GObject * object, guint prop_id,
             filter->phi = deg_to_rad(vptr->phi);
             filter->theta = deg_to_rad(vptr->theta);
 
-            g_mutex_lock(&filter->processing);
+            g_mutex_lock(&filter->processing[filter->ind]);
             //update matrix
             //gstcuda_update_matrix(deg_to_rad(120), filter->phi, filter->theta);
             //get newmask
             g_atomic_int_set(&filter->newframemask,0x0000001/*newmask*/);
-            g_mutex_unlock(&filter->processing);
+            g_mutex_unlock(&filter->processing[filter->ind]);
 
         break;
 
         case PROP_BMAP:
-            g_mutex_lock(&filter->processing);
+            g_mutex_lock(&filter->processing[filter->ind]);
             //gstcuda_bmap_config( g_value_get_string(value));
-            g_mutex_unlock(&filter->processing);
+            g_mutex_unlock(&filter->processing[filter->ind]);
         break;
 
         case PROP_XYMAP:
-            g_mutex_lock(&filter->processing);
+            g_mutex_lock(&filter->processing[filter->ind]);
             //gstcuda_xymap_config( g_value_get_string(value));
-            g_mutex_unlock(&filter->processing);
+            g_mutex_unlock(&filter->processing[filter->ind]);
+        break;
+        case PROP_INTERMAP:
+             g_mutex_lock(&filter->processing[filter->ind]);
+            //gstcuda_xymap_config( g_value_get_string(value));
+            g_mutex_unlock(&filter->processing[filter->ind]);
         break;
 
         default:
@@ -821,6 +965,9 @@ gst_panorama_get_property (GObject * object, guint prop_id,
 
         case PROP_XYMAP:
           
+        break;
+
+        case PROP_INTERMAP:
         break;
 
         default:
@@ -943,6 +1090,18 @@ gst_panorama_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
                 if (format){
                     if (!strcmp(format, "xBGR")){
                         filter->inbuffersize = 4*filter->inwidth*filter->inheight;
+                        filter->incolorspace = 0;
+                    }else if (!strcmp(format, "I420")){
+                        filter->incolorspace = 1;
+                       // if (filter->yuvtogray8){
+                       //     filter->inbuffersize = filter->inwidth*filter->inheight;
+                       // }else{
+                            filter->inbuffersize = 3*filter->inwidth*filter->inheight/2;
+                       // }
+                        
+                    }else if (!strcmp(format, "GRAY8")){
+                        filter->incolorspace = 2;
+                        filter->inbuffersize = filter->inwidth*filter->inheight;
                     }else{
                         g_print ("format NOT supported\n");
                         return FALSE;
@@ -954,51 +1113,107 @@ gst_panorama_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
             }
 
             //ret = gst_panorama_setoutcaps (filter, caps);
+            if (filter->configured==FALSE){
+                filter->configured=TRUE;
+                othercaps = gst_pad_get_allowed_caps (filter->outsrcpad);
+                othersstructure = gst_caps_get_structure (othercaps, 0);
 
-            othercaps = gst_pad_get_allowed_caps (filter->outsrcpad);
-            othersstructure = gst_caps_get_structure (othercaps, 0);
-
-            ret = gst_structure_get_int (othersstructure, "width", &filter->outwidth);
-            if (ret){
-                g_print("peer width is: %d\n",filter->outwidth);
-            }else{
-                filter->outwidth = DEFAULT_OUTWIDTH;
-                gst_structure_set (othersstructure, "width", G_TYPE_INT, filter->outwidth, NULL);
-            }
-
-            ret = gst_structure_get_int (othersstructure, "height", &filter->outheight);
-            if (ret){
-               g_print("peer height is: %d\n",filter->outheight);
-            }else{
-                filter->outheight = DEFAULT_OUTHEIGHT;
-                gst_structure_set (othersstructure, "height", G_TYPE_INT, filter->outheight, NULL);
-            }
-
-            format  = gst_structure_get_string(othersstructure, "format");
-            if (format){
-                if (!strcmp(format, "xBGR")){
-                    filter->outbuffersize = 4*filter->outwidth*filter->outheight;
+                ret = gst_structure_get_int (othersstructure, "width", &filter->outwidth);
+                if (ret){
+                    g_print("peer width is: %d\n",filter->outwidth);
                 }else{
-                    g_print ("format NOT supported\n");
+                    filter->outwidth = DEFAULT_OUTWIDTH;
+                    gst_structure_set (othersstructure, "width", G_TYPE_INT, filter->outwidth, NULL);
+                }
+
+                ret = gst_structure_get_int (othersstructure, "height", &filter->outheight);
+                if (ret){
+                    g_print("peer height is: %d\n",filter->outheight);
+                }else{
+                    filter->outheight = DEFAULT_OUTHEIGHT;
+                    gst_structure_set (othersstructure, "height", G_TYPE_INT, filter->outheight, NULL);
+                }
+
+                format  = gst_structure_get_string(othersstructure, "format");
+                if (format){
+                    if (!strcmp(format, "xBGR")){
+                        if ((filter->incolorspace==1) ||  (filter->incolorspace==2)) {
+                            g_print("I420/GRAY8 to xBGR not supported");
+                            return FALSE;
+                        }
+                        filter->outbuffersize = 4*filter->outwidth*filter->outheight;
+                        filter->outcolorspace = 0;
+                    }else if (!strcmp(format, "I420")){
+                        if ((filter->incolorspace==0) || (filter->incolorspace==2)){
+                            g_print("xBGR/GRAY8 to I420 not supported");
+                            return FALSE;
+                        }
+                        filter->outcolorspace = 1;
+                        //if (filter->yuvtogray8){
+                        //    filter->outbuffersize = filter->outwidth*filter->outheight;
+                       // }else{
+                            filter->outbuffersize = 3*filter->outwidth*filter->outheight/2;
+                       // }
+                    }else if (!strcmp(format, "GRAY8")){
+                        if (filter->incolorspace==0){
+                            g_print("xBGR to GRAY8 not supported");
+                            return FALSE;
+                        }
+                        filter->outcolorspace = 2;
+                        filter->outbuffersize = filter->outwidth*filter->outheight;
+                    }else if (!strcmp(format, "RGBA")){
+                        
+                        filter->outcolorspace = 3;
+                        filter->outbuffersize = 4*filter->outwidth*filter->outheight;
+                    }else if (!strcmp(format, "RGB")){
+                        
+                        filter->outcolorspace = 4;
+                        filter->outbuffersize = 3*filter->outwidth*filter->outheight;
+                    }else{
+                        g_print ("format NOT supported\n");
+                        return FALSE;
+                    }
+                }else{
+                    g_print ("format NOT available\n");
                     return FALSE;
                 }
-            }else{
-                g_print ("format NOT available\n");
-                return FALSE;
+
+                if ((filter->incolorspace==1) && (filter->outcolorspace==2))
+                    filter->yuvtogray8=1;
+                else
+                    filter->yuvtogray8=0;
+
+                gstpano_output_alloc(   filter->cudapriv,
+                                        filter->outcolorspace,
+                                        filter->yuvtogray8,
+                                        filter->outwidth,
+                                        filter->outheight);
+
+                 g_print("outt readdddddddddddddddddyyyyyyyyyyyyyyyyyyyyyyyyyyy : %d\n",gst_pad_get_id(pad) );
+
+                  //udate matrix
+                gstcuda_update_matrix(filter->cudapriv, deg_to_rad(90), filter->phi, filter->theta);
+
+                
             }
 
-            g_print("out str: %s\n",gst_structure_to_string(othersstructure));
+          //  g_print("out str: %s\n",gst_structure_to_string(othersstructure));
 
-            //gstcuda_set_dims
-
-            printf("inwidth: %d\n inheight: %d\n outwidth: %d outheight: %d",filter->inwidth,filter->inheight,filter->outwidth, filter->outheight);
-            // gstcuda_set_dims(3600, 1800, filter->inwidth,
-            //                             filter->inheight, 
-            //                             filter->outwidth,
-            //                             filter->outheight);
-            // gstcuda_update_matrix(deg_to_rad(120), filter->phi, filter->theta);
 
             ret = gst_pad_event_default (pad, parent, event);
+            if (ret){
+                gstcuda_source_alloc(   filter->cudapriv, 
+                            filter->incolorspace, 
+                            filter->yuvtogray8,
+                            filter->inwidth, 
+                            filter->inheight, 
+                            gst_pad_get_id(pad) );
+
+               
+
+            }else
+                g_print("error in pad : %d\n",gst_pad_get_id(pad) );
+
         }
         break;
 
@@ -1006,6 +1221,9 @@ gst_panorama_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
             ret = gst_pad_event_default (pad, parent, event);
         break;
   }
+
+
+
   return ret;
 }
 
@@ -1018,12 +1236,13 @@ gst_panorama_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
     GstPanorama *filter;
     GstFlowReturn ret = GST_FLOW_OK;
     int i;
+    static GstClockTime timestamp = 0; 
+    static GstClockTime oldtime = 0;
     gint padid;
     GstMapInfo info,info2;
     GstBuffer *outbuf;
     gboolean padfound = FALSE;
-    struct cudamsg msg;
-//    gpointer outdata;
+   //    gpointer outdata;
     filter = GST_PANORAMA (parent);
   //  g_debug("chain on %s\n", GST_PAD_NAME(pad));
     for (i=0;i<6;i++){
@@ -1032,22 +1251,26 @@ gst_panorama_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
             padid = gst_pad_get_id(pad);
 
             if (filter->newframemask & padmasks[i]){
-                if (g_mutex_trylock(&filter->processing)){
-                    g_mutex_unlock(&filter->processing);
+                if (g_mutex_trylock(&filter->processing[filter->ind])){
+                    g_mutex_unlock(&filter->processing[filter->ind]);
 
-                    if (g_atomic_int_get(&filter->newframes) & padmasks[padid]){
-                       //g_mutex_unlock(&filter->processing);
+                    if (g_atomic_int_get(&filter->newframes[filter->ind]) & padmasks[padid]){
+                        
                         gst_buffer_unref(buf);
-                        return ret;
+                        
+                        return GST_FLOW_OK;
                     }
                     
 
-                    g_atomic_int_or(&filter->newframes, padmasks[padid]);
+                    g_atomic_int_or(&filter->newframes[filter->ind], padmasks[padid]);
                     gst_buffer_map (buf, &info, GST_MAP_READ);
-                    gstcuda_update_source(padid, (void *)info.data );
+                    gstcuda_update_source(filter->cudapriv, padid, (void *)info.data, filter->ind );
 
                     gst_buffer_unmap (buf, &info);
+                   // g_print("times: %lu %lu\n", GST_BUFFER_PTS(buf),GST_BUFFER_DTS(buf) );
+                    
                     gst_buffer_unref(buf);
+                    
                     break;
                     
 
@@ -1055,13 +1278,15 @@ gst_panorama_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
                     
                 }else{
                     gst_buffer_unref(buf);
-                    return ret;
+                   // g_print("pr..flush 2\n");
+                    return GST_FLOW_OK;
                 }
                 break;
             }else{
                 //gst_pad_push (filter->outsrcpad, buf);
                 gst_buffer_unref(buf);
-                return ret;
+              //  g_print("flush 3\n");
+                return GST_FLOW_OK;
             }
         }
     }
@@ -1069,39 +1294,52 @@ gst_panorama_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
     if (padfound==FALSE){
         g_error("Pad with name: %s not found\n", GST_PAD_NAME(pad));
         gst_buffer_unref(buf);
-        return ret;
+        return GST_FLOW_ERROR;
     }
-
-
 
     //Just in case
-    g_atomic_int_and(&filter->newframes, filter->newframemask);
+    g_atomic_int_and(&filter->newframes[filter->ind], filter->newframemask);
 
-    if (g_atomic_int_compare_and_exchange(&filter->newframes, filter->newframemask, 0)){
-        g_mutex_lock(&filter->processing);
+    if (g_atomic_int_compare_and_exchange(&filter->newframes[filter->ind], filter->newframemask, 0)){
+       
+        g_mutex_lock(&filter->processing[filter->ind]);
      
-        gstcuda_process();
+        gstcuda_process(filter->cudapriv, filter->ind);
         
-     //   g_print("processing done. %d\n",filter->outbuffersize);
-        //gstcuda_sync_all();
+        //g_print("processing done. %d\n",filter->outbuffersize);
+        //gstcuda_sync_all(filter->cudapriv);
         outbuf = gst_buffer_new_allocate (filter->cudaallocator, filter->outbuffersize, NULL);
         gst_buffer_map (outbuf, &info2, GST_MAP_WRITE);
-       // printf("start readout...........................................................kk\n");
+        //printf("start readout...........................................................kk\n");
 
-        gstcuda_get_output((void *)info2.data);
-        //gstcuda_sync_all();
+        gstcuda_get_output(filter->cudapriv, (void *)info2.data, filter->ind);
+        //gstcuda_sync_all(filter->cudapriv);
         gst_buffer_unmap (outbuf, &info2);
-       // GST_BUFFER_DURATION (outbuf) = gst_util_uint64_scale_int (1, GST_SECOND, 2);
-        
-        gst_pad_push(filter->outsrcpad, outbuf);
 
-       
-        g_mutex_unlock(&filter->processing);
-    }else{
+       //  GST_BUFFER_PTS (outbuf) = timestamp;
+       // GST_BUFFER_DURATION (outbuf) = gst_util_uint64_scale_int (1, GST_SECOND, 30);
+       // timestamp += GST_BUFFER_DURATION (outbuf); 
+        printf("framerat11e: %d\n", timestamp - oldtime);
+        oldtime = timestamp;
+
+       gst_pad_push(filter->outsrcpad, outbuf);
+
+        
+        g_mutex_unlock(&filter->processing[filter->ind]);
+    
+static double x=0.0;
+static double y=320.0;
+if (x>640.0){
+x=0.0;
+} else x = x+1.0;
+gstcuda_update_matrix(filter->cudapriv, deg_to_rad(90), deg_to_rad(180.0f*(y/filter->outheight)), deg_to_rad(360.0f*(x/filter->outwidth)));
+
+
+}else{
 
     }
 
-    return ret;
+    return GST_FLOW_OK;
 }
 
 

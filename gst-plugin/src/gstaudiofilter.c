@@ -330,13 +330,13 @@ plugin_init (GstPlugin * plugin)
  *
  * FIXME:exchange the string 'Template plugin' with you plugin description
  */
-GST_PLUGIN_DEFINE (
-    GST_VERSION_MAJOR,
-    GST_VERSION_MINOR,
-    audiofiltertemplateplugin,
-    "Audio filter template plugin",
-    plugin_init,
-    VERSION, "LGPL",
-    "GStreamer",
-    "http://gstreamer.freedesktop.org"
-);
+// GST_PLUGIN_DEFINE (
+//     GST_VERSION_MAJOR,
+//     GST_VERSION_MINOR,
+//     audiofiltertemplateplugin,
+//     "Audio filter template plugin",
+//     plugin_init,
+//     VERSION, "LGPL",
+//     "GStreamer",
+//     "http://gstreamer.freedesktop.org"
+// );

@@ -69,13 +69,14 @@
 
 #define DEFAULT_INBUFFERSIZE  (4*1920*1080)
 #define DEFAULT_PHI         (90)
-#define DEFAULT_THETA       (0)
+#define DEFAULT_THETA       (90)
 #define DEFAULT_MATRIXAUTOUPDATE (TRUE)
 
 #define DEFAULT_OUTWIDTH (640)
 #define DEFAULT_OUTHEIGHT (480)
 #define QUEUE_NAME "/panoqueue"
 
+#define DEFAULT_INTERMAPFILE "/home/ubuntu/pano/intermap.bin" 
 #define DEFAULT_XYMAPFILE "/home/ubuntu/pano/xymap.bin"
 #define DEFAULT_BMAPFILE "/home/ubuntu/pano/bmap.bin"
 
@@ -98,10 +99,13 @@ enum {
     GSTCUDA_SET_DIMS,
     GSTCUDA_BMAP_COFIG,
     GSTCUDA_XYMAP_CONFIG,
+    GSTCUDA_INTERMAP_CONFIG,
     GSTCUDA_UPDATE_MATRIX,
     GSTCUDA_SYNC_ALL,
     GSTCUDA_MAX
 };
+
+
 
 G_BEGIN_DECLS
 
@@ -116,6 +120,7 @@ G_BEGIN_DECLS
   (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_PANORAMA))
 #define GST_IS_PANORAMA_CLASS(klass) \
   (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_PANORAMA))
+
 
 typedef struct _GstPanorama      GstPanorama;
 typedef struct _GstPanoramaClass GstPanoramaClass;
@@ -141,12 +146,15 @@ GstPanoramaMeta *gst_buffer_add_panorama_meta (
                                                     gint age,
                                                     const gchar *name
                                               );
+
 #endif
 
 #if 1
+
 typedef struct
 {
     GstAllocator parent;
+    void *cudapriv;
 }PanoramaAllocator;
 
 struct _PanoramaAllocatorClass
@@ -159,17 +167,20 @@ typedef struct
 {
     GstMemory mem;
     gpointer data;
+    void *cudapriv;
 
 }CudaHostMemory;
 
-struct cudamsg {
+// struct cudamsg {
 
-    int type;
-    unsigned int payload[8];
-    char text[16];
-    float fracs[3];
-};
+//     int type;
+//     unsigned int payload[8];
+//     char text[16];
+//     float fracs[3];
+// };
 
+#define GST_PANORAMA_ALLOCATOR(obj) \
+  (G_TYPE_CHECK_INSTANCE_CAST((obj),panorama_allocator_get_type(),PanoramaAllocator))
 
 
 
@@ -182,9 +193,11 @@ struct PanoramaVector {
 
 struct _GstPanorama
 {
+    GValue gprivptr;
     GstElement element;
     GstAllocator *cudaallocator;
-    void *cudapano;
+    //PanoramaAllocator *cudaallocator;
+    void *cudapriv;
 
     GstPad *sinkpads[SINKPADCNT];
     // GstPad *leftsinkpad;
@@ -195,10 +208,10 @@ struct _GstPanorama
     GstPad *outsrcpad;
 
     /*Frame counters on sink pads, and current mask based on phi and theta*/
-    volatile guint newframes;
+    volatile guint newframes[2];
     // volatile guint processingflag;
     // volatile guint matrixupdateflag;
-    GMutex processing;
+    GMutex processing[2];
 
     guint newframemask;
     gboolean autoupdate;
@@ -214,6 +227,12 @@ struct _GstPanorama
     gint inheight;
     gint outwidth;
     gint outheight;
+
+    gint incolorspace;
+    gint outcolorspace;
+    gint yuvtogray8;
+    gint ind;
+    gboolean configured;
 
     // pthread_t thread;
     // mqd_t mqs;
