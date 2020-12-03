@@ -1,0 +1,10 @@
+gst-app/src/1920x1080.jpg
+gst-app/src/gapp
+gst-app/src/helloworld
+gst-app/src/init.sh
+gst-plugin/Makefile
+gst-plugin/compile
+gst-plugin/libpano.so
+gst-plugin/src/.deps/
+gst-plugin/src/Makefile
+gst-plugin/src/libpano.so
