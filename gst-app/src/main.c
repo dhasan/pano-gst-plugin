@@ -131,37 +131,10 @@ int main (int argc, char *argv[]){
 	g_assert(pano.videoconvert);
 	gst_bin_add(GST_BIN (pano.pipeline), pano.videoconvert);
 
-	// pano.videoconverttemp = gst_element_factory_make ("videoconvert", "videoconverttemp0");
-	// g_assert(pano.videoconverttemp);
-	// gst_bin_add(GST_BIN (pano.pipeline), pano.videoconverttemp);
 
 	pano.xvimagesink = gst_element_factory_make ("nveglglessink", "ximagesink0");
 	g_assert(pano.xvimagesink);
 	gst_bin_add(GST_BIN (pano.pipeline), pano.xvimagesink);
-
-
-
-////
-	//pano.v4l2source[0] = gst_element_factory_make ("videotestsrc", "v4l2src0");
-	//g_assert(pano.v4l2source[0]);
-	//g_object_set(G_OBJECT (pano.v4l2source[0]), "device", "/dev/video0", NULL);
-	//gst_bin_add(GST_BIN (pano.pipeline), pano.v4l2source[0]);
-
-	//pano.jpegdec[0] = gst_element_factory_make ("nvjpegdec", "nvjpegdec0");
-	//g_assert(pano.jpegdec[0]);
-	//gst_bin_add(GST_BIN (pano.pipeline), pano.jpegdec[0]);
-
-	//if (gst_element_link_filtered(pano.v4l2source[0], pano.jpegdec[0], jcaps)==FALSE){
-	//	g_print("cant link v4l2 and jpegdec 0\n");
-	//}
-
-	// if (gst_element_link(pano.jpegdec[0], pano.videoconverttemp)==FALSE){
-	// 	g_print("cant convert temp2\n");
-	// }
-
-	//if (gst_element_link_pads_filtered(pano.jpegdec[0], "src", pano.panorama, panopadnames[0], vcaps)==FALSE){
-//			g_print("cant link %s\n", panopadnames[0]);
-//	}
 
 
 
@@ -171,28 +144,14 @@ int main (int argc, char *argv[]){
 	for (i=0;i<6;i++){
 		pano.v4l2source[i] = gst_element_factory_make ("videotestsrc", v4l2srcname[i]);
 		g_assert(pano.v4l2source[i]);
-		//g_object_set(G_OBJECT (pano.v4l2source[i]), "location", "hd.jpg", NULL);
-		//g_object_set(G_OBJECT (pano.v4l2source[i]), "device", v4l2loc[i],NULL);
 		gst_bin_add(GST_BIN (pano.pipeline), pano.v4l2source[i]);
 
-//		pano.jpegparse[i] = gst_element_factory_make ("jpegparse", jpegparsename[i]);
-//		g_assert(pano.jpegparse[i]);
-//		gst_bin_add(GST_BIN (pano.pipeline), pano.jpegparse[i]);
-
-
-//		pano.jpegdec[i] = gst_element_factory_make ("jpegdec", jpegdecname[i]);
-//		g_assert(pano.jpegdec[i]);
-//		gst_bin_add(GST_BIN (pano.pipeline), pano.jpegdec[i]);
-
-		//gst_element_link_filtered(pano.v4l2source[i], pano.jpegparse[i], jcaps);
-		//gst_element_link(pano.jpegparse[i], pano.jpegdec[i]);
-		//gst_element_link_pads_filtered (pano.jpegdec[i],NULL, pano.panorama, panopadnames[i], vcaps);
 	
-if (gst_element_link_pads_filtered (pano.v4l2source[i], "src", pano.panorama, panopadnames[i], vcaps)==FALSE){
+                if (gst_element_link_pads_filtered (pano.v4l2source[i], "src", pano.panorama, panopadnames[i], vcaps)==FALSE){
                         g_print("44cant link %s\n", panopadnames[i]);
                 }
 
-}
+        }
 #else
 	GstElement *freeze[6];
 	for (i=1;i<6;i++){
@@ -227,19 +186,12 @@ if (gst_element_link_pads_filtered (pano.v4l2source[i], "src", pano.panorama, pa
 
 #endif
 
-gst_element_link_filtered(pano.panorama, pano.xvimagesink, outcaps);
-	//gst_element_link_filtered(pano.panorama, pano.videoconvert,outcaps);
-	//gst_element_link(pano.videoconvert, pano.xvimagesink );
-
-
-	// gst_caps_unref (jcaps);
-	// gst_caps_unref (vcaps);
-	// gst_caps_unref (outcaps);
+        gst_element_link_filtered(pano.panorama, pano.xvimagesink, outcaps);
 
 	gst_element_set_state (pano.pipeline, GST_STATE_PLAYING);
 	g_print("running...\n");
 	g_main_loop_run (pano.loop);
-    g_print ("Going out..\n");
+        g_print ("Going out..\n");
 
 	gst_element_set_state (pano.pipeline, GST_STATE_NULL);
 
